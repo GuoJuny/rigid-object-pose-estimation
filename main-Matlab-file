@@ -1,0 +1,98 @@
+%导入训练集 ·
+Train = imageDatastore('图片数据');
+%将图片数据转换成4维数组 
+Train = imds2array(Train);
+%导入测试集
+TestTrain = imageDatastore('测试文件地址');
+TestTrain = imds2array(TestTrain);
+% 读取每个图片中物体的三维旋转矩阵
+fname = 'scene.json';
+fid = fopen(fname);
+raw = fread(fid,inf);
+str = char(raw');
+fclose(fid);
+val = jsondecode(str);
+a = struct2cell(val);
+for i=1:numel(a)
+b = a(i);
+relabel=reshape(b{1,1}.cam_R_m2c,[3,3]);
+ro = dcm2quat(relabel);
+Trainlabel(:,i) = ro;
+end
+
+Trainlabel = Trainlabel';
+%导入测试集的旋转矩阵
+fname2 = '测试集旋转矩阵地址';
+fid2 = fopen(fname2);
+raw2 = fread(fid2,inf);
+str2 = char(raw2');
+fclose(fid2);
+val2 = jsondecode(str2);
+d = struct2cell(val2);
+for i=1:numel(d)
+e = d(i);
+label=reshape(e{1,1}.cam_R_m2c,[3,3]);
+rota= dcm2quat(label);
+TestTrainlabel(:,i) =rota;
+End
+TestTrainlabel = TestTrainlabel';
+
+% net = resnet101; 
+% analyzeNetwork(net)
+ % lgraph = layerGraph(net); 
+% input=imageInputLayer([128 128 3],'Name','input'); 
+% lgraph=replaceLayer(lgraph,"data",input);
+ % fc = fullyConnectedLayer(4,"Name","new_fc");
+ % lgraph = replaceLayer(lgraph,"fc1000",fc); 
+% lgraph = removeLayers(lgraph,"prob");
+ % out = regressionLayer("Name","new_out"); 
+% lgraph = replaceLayer(lgraph,"ClassificationLayer_predictions",out); 
+% lgraph = connectLayers(lgraph,"new_fc","new_out");
+ % inputSize = net.Layers(1).InputSize; 
+% analyzeNetwork(lgraph)
+
+net = mobilenetv2; 
+ analyzeNetwork(net) 
+ lgraph = layerGraph(net); 
+ input=imageInputLayer([128 128 3],'Name','input'); 
+ lgraph=replaceLayer(lgraph,"input_1",input); 
+ fc = fullyConnectedLayer(4,"Name","new_fc");
+  lgraph = replaceLayer(lgraph,"Logits",fc); 
+ lgraph = removeLayers(lgraph,"Logits_softmax"); 
+ out = regressionLayer("Name","new_out"); 
+ lgraph = replaceLayer(lgraph,"ClassificationLayer_Logits",out); 
+ lgraph = connectLayers(lgraph,"new_fc","new_out");
+  inputSize = net.Layers(1).InputSize; 
+ analyzeNetwork(lgraph)
+
+%训练网络
+miniBatchSize = 32;
+validationFrequency = floor(numel(Trainlabel)/miniBatchSize);
+options = trainingOptions('sgdm', ...
+'MiniBatchSize',miniBatchSize, ...
+'MaxEpochs',35, ...
+'InitialLearnRate',1e-4, ...
+'LearnRateSchedule','piecewise', ...
+'LearnRateDropFactor',0.1, ...
+'LearnRateDropPeriod',20, ...
+'Shuffle','every-epoch', ...
+'ValidationData',{TestTrain,TestTrainlabel}, ...
+'ValidationFrequency',validationFrequency, ...
+'Plots','training-progress', ...
+'Verbose',false);
+net = trainNetwork(Train,Trainlabel,lgraph ,options);
+net.Layers 
+net
+YPredicted = quat2rotm(predict(net,TestTrain));
+toc; 
+TestTrainlabel2=quat2rotm(TestTrainlabel);
+errorall = 0;
+for n=1:numel(d)
+error_cos = 0.5 * (trace(YPredicted(:,:,n) *(inv(TestTrainlabel2(:,:,n)))) - 1.0);
+error_cos = min(1.0, max(-1.0, error_cos));
+error = acos(error_cos);
+error = (180.0 * error)/ pi;
+errorall = errorall + error;
+end
+average_error=errorall/图片总数量
+
